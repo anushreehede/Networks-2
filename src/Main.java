@@ -6,20 +6,21 @@ public class Main
 	public static void main(String args[]) throws Exception
 	{
 		// object to call methods 
-		Functionality f = new Functionality();
+		Training t = new Training();
 
 		// contain details of all packets in each flow
-		ArrayList<Flow> flows = f.createFlows(args[0]);
+		ArrayList<Flow> flows = t.createFlows(args[0]);
 
-		Hashtable<String, ArrayList<Flow>> grouped_flows = f.groupAllFlows(flows);
+		Hashtable<String, ArrayList<Flow>> grouped_flows = t.groupAllFlows(flows);
 
 		// detects those targets that are being subjected to brute force attacks
-		f.bruteForceDetection(grouped_flows);
+		ArrayList<String> brute_force = t.bruteForceDetection(grouped_flows);
 
 		// detects those targets which are compromised after the attack is successful
-		f.compromiseDetection(flows);
+		t.compromiseDetection(grouped_flows, brute_force);
 
-
+		// calculates accuracy of identification of compromises 
+		t.calcAccuracy(grouped_flows, brute_force);
 	}
 
 
