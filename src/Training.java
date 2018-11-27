@@ -7,11 +7,11 @@ class Training
 {
 	// threshold values used in the functions
 	int packet_thresh = 3;
-	float time_thresh = 42500;
+	// float time_thresh = 42500;
 	
 	// pre defined value
 	float login_grace_time = 120000;
-	
+
 	// Method to get flow information from the logs
 	static ArrayList<Flow> createFlows(String dirName) throws Exception
 	{
@@ -277,12 +277,52 @@ class Training
 
          	if(found == 1)
          	{
-         		System.out.println(" Brute Force!\n");
+         		// System.out.println(" Brute Force!\n");
          		brute_force.add(str);
          	}
       	}
       	return brute_force;
 	}
+
+	// calculate the most frequent value in a set (mode)
+	int calcMode(ArrayList<Integer> ppf) 
+    {
+        int max = 0, max_count = 0;
+ 
+        for(int i=0; i<ppf.size(); ++i) 
+        {
+            int count=0;
+            for (int j=0; j<ppf.size(); ++j) 
+            {
+                if (ppf.get(j) == ppf.get(i))
+                    ++count;
+            }
+            if (count > max_count) 
+            {
+                max_count = count;
+                max = ppf.get(i);
+            }
+        }
+ 
+        return max;
+    }
+
+	// Check mitigation mechanism activation
+	int getBaseline(Hashtable<String, ArrayList<Flow>> attackerIPs, String attacker)
+	{
+
+    	ArrayList<Flow> flows = attackerIPs.get(attacker);
+    	ArrayList<Integer> ppf = new ArrayList<Integer>();
+
+    	for(Flow f: flows)
+    	{
+    		ppf.add(f.features.size());
+    	}
+
+    	int baseline = calcMode(ppf);
+
+    	return baseline;
+	} 
 
 	// Method to find the number of encrypted packets sent to server after logins 
 	int encryptedPackets(Flow f)
@@ -290,7 +330,7 @@ class Training
 		int total_logins = 0;
 		for(String line: f.logs)
 		{
-			if(line.contains("login attempt"))
+			if(line.contains("root trying auth password"))
 			{
 				++total_logins;
 			}
@@ -305,27 +345,6 @@ class Training
 		int encr_data = encrypted-total_logins;
 
 		return encr_data;
-	}
-
-	// Method to get the time difference between two packets
-	long getTimeDifference(Packet p1, Packet p2)
-	{
-		long t1 = 0, t2 = 0;
-		try 
-		{
-		    SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
-		    Date parsedDate1 = dateFormat.parse(p1.timestamp);
-		    t1 = parsedDate1.getTime();
-		    Date parsedDate2 = dateFormat.parse(p2.timestamp);
-		    t2 = parsedDate2.getTime();
-
-		} catch(Exception e) { //this generic but you can control another types of exception
-		    // look the origin of excption 
-		    System.out.println(e);
-		}
-		long diff = t2-t1;
-
-		return diff;
 	}
 
 	// Method to get the time difference between compromise and end of flow connection
@@ -355,11 +374,59 @@ class Training
 		return close_time;
 	}
 
-	// Method to
-	float idleTime(Flow f)
+	Boolean stillAttacking(Flow f)
 	{
-		//
-		return 0;
+		int flag=0;
+		for(String line: f.logs)
+		{
+			if(flag == 0 && line.contains("root authenticated with password"))
+			{
+				flag = 1; 
+				continue;
+			}
+			if(flag == 1 && line.contains("login attempt") && line.contains("failed"))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Method to get the time difference between two packets
+	long getTimeDifference(Packet p1, Packet p2)
+	{
+		long t1 = 0, t2 = 0;
+		try 
+		{
+		    SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
+		    Date parsedDate1 = dateFormat.parse(p1.timestamp);
+		    t1 = parsedDate1.getTime();
+		    Date parsedDate2 = dateFormat.parse(p2.timestamp);
+		    t2 = parsedDate2.getTime();
+
+		} catch(Exception e) { //this generic but you can control another types of exception
+		    // look the origin of excption 
+		    System.out.println(e);
+		}
+		long diff = t2-t1;
+
+		return diff;
+	}
+
+	// Method to calculate max idle time in a flow
+	long idleTime(Flow f)
+	{
+		long max_idle = 0;
+		for(int i = 0; i<f.features.size(); ++i)
+		{
+			if(f.features.get(i).incoming == 0 && i+1 < f.features.size() && f.features.get(i+1).incoming == 1)
+			{
+				long t = getTimeDifference(f.features.get(i), f.features.get(i+1));
+				if(t > max_idle)
+					max_idle = t;
+			}
+		}
+		return max_idle;
 	}
 
 	// Method to label a flow with the ground truth
@@ -373,7 +440,7 @@ class Training
 				++total_logins;
 			}
 		}
-		if(total_logins>=6 )//&& idleTime > 60)
+		if(total_logins>=6 && idleTime(f)<=3600000)
 		{
 			f.actual = "Compromise";
 		}
@@ -388,8 +455,6 @@ class Training
 	{
 		// int pack = 0;
 		// int total = 0;
-		// float time = 0;
-		// int tt = 0;
 
 		// iterate through the attacker IPs
 		Enumeration ips = attackerIPs.keys();
@@ -401,6 +466,7 @@ class Training
 			if(!brute_force.contains(str))
 				continue;
 
+			int baseline = getBaseline(attackerIPs, str);
         	ArrayList<Flow> flows = attackerIPs.get(str);
         	
         	// iterate through each flow
@@ -417,7 +483,7 @@ class Training
         			{
         				// pack += encryptedPackets(f);
         				// total++;
-
+        				g = 1;
         				// if the number of encrypted packets sent after auth
         				// is greater than a threshold, connection is maintained 
         				if(encryptedPackets(f) > packet_thresh)
@@ -427,87 +493,88 @@ class Training
         					// not compromised
         					if(timeTillClose(f, line) > login_grace_time)
         					{
-        						System.out.println("Not Compromise");
+        						System.out.println("Terminated connection, not a compromise");
         						f.label = "Not Compromise";
         						g = 1;
         						break;
         					}
 
-        					// else check if attacker makes any other attacks
+        					// else check if attacker is still attacking the host
         					else
         					{
-        						// if end of the list, then attacker aborts dictionary 
-        						if(i+1 == flows.size())
+        						if(stillAttacking(f))
         						{
-        							System.out.println("Maintain connection, abort dictionary");
-        							f.label = "Compromise";
+        							// check for the mitigation mechanism
+	        						if(f.features.size() > baseline)
+	        						{
+	        							System.out.println("Mitigation mech detected, maintain connection + continue dictionary");
+	        							f.label = "Compromise";
+	        						}
+	        						else
+	        						{
+	        							System.out.println("Mitigation mechanism not detected, not a compromise (MCCD)");
+	        							f.label = "Not Compromise";
+	        						}
         						}
+        						// attacker has stopped traffic to the host
         						else
         						{
-        							// get the next attack from the IP
-        							Flow f1 = flows.get(i+1);
-
-        							// get the time difference between the two consecutive flows 
-        							float t = getTimeDifference(f.features.get(f.features.size()-1), f1.features.get(0));
-        							// time += t;
-        							// tt++;
-
-        							// if the time difference is greater than a threshold, then attacker aborts dictionary
-        							if(t > time_thresh)
-        							{
-        								System.out.println("Maintain connection, abort dictionary");
-        								f.label = "Compromise";
-        							}
-        							// else he continues dictionary
-        							else
-        							{
-        								System.out.println("Maintain connection, continue dictionary");
-        								f.label = "Compromise";
-        							}	
+        							// check for the mitigation mechanism
+        							if(f.features.size() > baseline)
+	        						{
+	        							System.out.println("Mitigation mech detected, maintain connection + abort dictionary");
+	        							f.label = "Compromise";
+	        						}
+	        						else
+	        						{
+	        							System.out.println("Mitigation mechanism not detected, not a compromise (MCAD)");
+	        							f.label = "Not Compromise";
+	        						}
         						}
+        						
         					}
         				}
 
         				// the attacker instantly logs out after compromise
         				else
         				{
-        					// check if attacker makes any other attacks
-        					if(i+1 == flows.size())
+        					// is attacker still attacking the host
+    						if(stillAttacking(f))
     						{
-    							System.out.println("Instant logout, abort dictionary");
-    							f.label = "Compromise";
+    							// check for the mitigation mechanism
+        						if(f.features.size() > baseline)
+        						{
+        							System.out.println("Mitigation mech detected, instant logout + continue dictionary");
+        							f.label = "Compromise";
+        						}
+        						else
+        						{
+        							System.out.println("Mitigation mechanism not detected, not a compromise (ILCD)");
+        							f.label = "Not Compromise";
+        						}
     						}
+    						// attacker stops all traffic to compromised host
     						else
     						{
-    							// get the next attack from the IP
-    							Flow f1 = flows.get(i+1);
-
-    							// get the time difference between the two consecutive flows 
-    							float t = getTimeDifference(f.features.get(f.features.size()-1), f1.features.get(0));
-    							// time += t;
-        			 			// tt++;
-
-        			 			// if the time difference is greater than a threshold, then attacker aborts dictionary
-    							if(t > time_thresh)
-    							{
-    								System.out.println("Instant logout, abort dictionary");
-    								f.label = "Compromise";
-    							}
-
-    							// else he continues dictionary
-    							else
-    							{
-    								System.out.println("Instant logout, continue dictionary");
-    								f.label = "Compromise";
-    							}
-    						} 
+    							// check for the mitigation mechanism
+    							if(f.features.size() > baseline)
+        						{
+        							System.out.println("Mitigation mech detected, instant logout + abort dictionary");
+        							f.label = "Compromise";
+        						}
+        						else
+        						{
+        							System.out.println("Mitigation mechanism not detected, not a compromise (ILAD)");
+        							f.label = "Not Compromise";
+        						}
+    						}
 
         				}
         			}
-
-        			else
-        				f.label = "Not Compromise";
         		}
+
+        		if(g == 0)
+        			f.label = "Not Compromise";
 
         		// provide actual labels to the flow
         		labelFlow(f);
@@ -530,6 +597,8 @@ class Training
 	{
 		int correct = 0;
 		int total = 0;
+		int a_comp = 0, a_not_comp = 0, p_comp = 0, p_not_comp = 0;
+		int tp = 0, tn = 0, fp = 0, fn = 0;
 		Enumeration ips = attackerIPs.keys();
 		while(ips.hasMoreElements()) 
 		{
@@ -547,12 +616,80 @@ class Training
         		{
         			++correct;
         		}
+        		if(f.actual.equals("Compromise"))
+        			++a_comp;
+        		if(f.actual.equals("Not Compromise"))
+        			++a_not_comp;
+        		if(f.label.equals("Compromise"))
+        			++p_comp;
+        		if(f.label.equals("Not Compromise"))
+        			++p_not_comp;
+
+        		if(f.actual.equals("Compromise") && f.label.equals("Compromise"))
+        			++tp;
+        		if(f.actual.equals("Not Compromise") && f.label.equals("Not Compromise"))
+        			++tn;
+        		if(f.actual.equals("Compromise") && f.label.equals("Not Compromise"))
+        			++fn;
+        		if(f.actual.equals("Not Compromise") && f.label.equals("Compromise"))
+        			++fp;
         	}
         }
 
     	float accuracy = (float)correct/total*100;
 
-    	System.out.println("Accuracy: "+accuracy+"%");
+    	System.out.println("\nAccuracy: "+accuracy+"%");
+
+    	System.out.println("\nTaking compromise as positive, not compromise as negative, ");
+    	// System.out.println("Actual compromise : "+a_comp+" ,actual not compromise: "+a_not_comp);
+    	// System.out.println("Predicted compromise : "+p_comp+" ,predicted not compromise: "+p_not_comp);
+
+    	// confusion matrix
+    	System.out.println("\nTrue Positive: "+tp+" , False Negative: "+fn);
+    	System.out.println("False Positive: "+fp+" , True Negative: "+tn);
+
+    	// more metrics 
+    	System.out.println("\nMore Metrics");
+    	float tpr = (float)tp/(tp+fn);
+    	float fnr = (float)fn/(tp+fn);
+    	float tnr = (float)tn/(tn+fp);
+    	float fpr = (float)fp/(tn+fp);
+    	System.out.println("TPR: "+tpr+"\tFNR: "+fnr);
+    	System.out.println("TNR: "+tnr+"\tFPR: "+fpr);
+
 	}
 
+
+
 }
+
+// check if attacker makes any other attacks
+// if(i+1 == flows.size())
+// {
+// 	System.out.println("Instant logout, abort dictionary");
+// 	f.label = "Compromise";
+// }
+// else
+// {
+// 	// get the next attack from the IP
+// 	Flow f1 = flows.get(i+1);
+
+// 	// get the time difference between the two consecutive flows 
+// 	float t = getTimeDifference(f.features.get(f.features.size()-1), f1.features.get(0));
+// 	// time += t;
+	// tt++;
+
+	// if the time difference is greater than a threshold, then attacker aborts dictionary
+// 	if(t > time_thresh)
+// 	{
+// 		System.out.println("Instant logout, abort dictionary");
+// 		f.label = "Compromise";
+// 	}
+
+// 	// else he continues dictionary
+// 	else
+// 	{
+// 		System.out.println("Instant logout, continue dictionary");
+// 		f.label = "Compromise";
+// 	}
+// } 
