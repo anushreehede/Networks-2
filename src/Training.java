@@ -433,14 +433,17 @@ class Training
 	void labelFlow(Flow f)
 	{
 		int total_logins = 0;
+		int flag = 0;
 		for(String line: f.logs)
 		{
 			if(line.contains("login attempt"))
 			{
 				++total_logins;
 			}
+			if(line.contains("root authenticated with password"))
+				flag = 1;
 		}
-		if(total_logins>=6 && idleTime(f)<=3600000)
+		if(flag==1 && total_logins>=6 && idleTime(f)<=3600000)
 		{
 			f.actual = "Compromise";
 		}
@@ -663,33 +666,3 @@ class Training
 
 }
 
-// check if attacker makes any other attacks
-// if(i+1 == flows.size())
-// {
-// 	System.out.println("Instant logout, abort dictionary");
-// 	f.label = "Compromise";
-// }
-// else
-// {
-// 	// get the next attack from the IP
-// 	Flow f1 = flows.get(i+1);
-
-// 	// get the time difference between the two consecutive flows 
-// 	float t = getTimeDifference(f.features.get(f.features.size()-1), f1.features.get(0));
-// 	// time += t;
-	// tt++;
-
-	// if the time difference is greater than a threshold, then attacker aborts dictionary
-// 	if(t > time_thresh)
-// 	{
-// 		System.out.println("Instant logout, abort dictionary");
-// 		f.label = "Compromise";
-// 	}
-
-// 	// else he continues dictionary
-// 	else
-// 	{
-// 		System.out.println("Instant logout, continue dictionary");
-// 		f.label = "Compromise";
-// 	}
-// } 
